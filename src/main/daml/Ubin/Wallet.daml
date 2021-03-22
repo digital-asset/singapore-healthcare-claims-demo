@@ -1,0 +1,74 @@
+--
+-- Copyright (c) 2019, Digital Asset (Switzerland) GmbH and/or its affiliates. All rights reserved.
+-- SPDX-License-Identifier: Apache-2.0
+--
+
+daml 1.2
+
+module Ubin.Wallet where
+
+data WalletContent = WalletContent
+  with
+    holder : Party
+    currency : Text
+    amount : Decimal
+    updated : Time
+  deriving (Eq, Show)
+
+template WalletHelper
+  with
+    depository : Party
+  where
+    signatory depository
+    key depository : Party
+    maintainer key
+
+    controller depository can
+      nonconsuming CreateOrUpdate : ContractId Wallet
+        with
+          holder : Party
+          currency : Text
+          amount : Decimal
+          updated : Time
+        do
+          maybeWid <- lookupByKey @Wallet (depository, holder, currency)
+          case maybeWid of
+            None -> do
+              create Wallet with depository; content = WalletContent with holder; currency; amount; updated
+            Some wid -> do
+              exercise wid UpdateBalance with newAmount = amount; newUpdated = updated
+            
+type WalletKey = (Party, Party, Text)
+
+template Wallet
+  with
+    depository : Party
+    content : WalletContent
+  where
+    signatory depository
+    observer content.holder
+    
+    key (depository, content.holder, content.currency) : WalletKey
+    maintainer key._1
+
+    controller depository can
+      UpdateBalance : ContractId Wallet
+        with 
+            newAmount : Decimal
+            newUpdated : Time
+        do
+          create this with content = content with amount = newAmount; updated = newUpdated
+
+createWallet = scenario do
+  alice <- getParty "Alice"
+  bob <- getParty "Bob"
+  now : Time <- getTime
+  submit alice do create Wallet with depository = alice; content = WalletContent with holder = bob; currency = "USD"; amount = 0.0; updated = now
+  
+createAndUpdateWallet = scenario do
+  alice <- getParty "Alice"
+  bob <- getParty "Bob"
+  now : Time <- getTime
+  submit alice do create WalletHelper with depository = alice
+  submit alice do exerciseByKey @WalletHelper alice CreateOrUpdate with holder = bob; currency = "USD"; amount = 0.0; updated = now
+  submit alice do exerciseByKey @WalletHelper alice CreateOrUpdate with holder = bob; currency = "USD"; amount = 10.0; updated = now

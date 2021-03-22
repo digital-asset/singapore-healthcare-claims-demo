@@ -1,0 +1,75 @@
+--
+-- Copyright (c) 2019, Digital Asset (Switzerland) GmbH and/or its affiliates. All rights reserved.
+-- SPDX-License-Identifier: Apache-2.0
+--
+
+daml 1.2
+module Ubin.Types where
+
+import DA.Next.Map
+import DA.Optional
+
+data PolicyType = Gold | Bronze deriving (Eq, Show)
+
+type ProcedureMap = Map ProcedureName ProcedureDetails
+
+data ProcedureName = Total_Knee_Arthoscopy | Elbow_Coronoid_Fracture_ORIF | Foot_Polydactyly_Excision
+  deriving (Enum, Eq, Show, Ord)
+
+data ProcedureDetails = ProcedureDetails
+  with
+    procedureName: ProcedureName
+    procedureCode: Text
+    cost: Decimal
+  deriving (Eq, Show, Ord)
+
+instance MapKey ProcedureName where
+   keyToText = show
+   keyFromText = readEnum "ProcedureName" [Total_Knee_Arthoscopy .. ]
+
+readEnum: Show a => Text -> [a] -> Text -> a
+readEnum name enum t = fromSomeNote err $ Prelude.lookup t textsWithProcNames
+  where
+    textsWithProcNames = zip texts enum
+    texts = map show enum
+    err = "Error reading " <> name <> ": " <> t
+
+data CostOfTreatment = CostOfTreatment
+  with
+    patientResponsibility: PatientResponsibility
+    insurerResponsibility: InsurerResponsibility
+  deriving (Eq, Show)
+
+data PatientResponsibility = PatientResponsibility
+  with
+    copay: Decimal
+    deductible: Decimal
+  deriving (Eq, Show)
+
+data InsurerResponsibility = InsurerResponsibility
+  with
+    ipInsurerAmt: Decimal
+    medishieldAmt: Decimal
+  deriving (Eq, Show)
+
+data PolicyDetails = PolicyDetails
+  with
+    patient: Party
+    ipInsurer: Party
+    medishield: Party
+    hospital: Party
+    ipInsurerCalcBreakdown: CalcBreakdown
+    medishieldCalcBreakdown: CalcBreakdown
+    currency: Text
+    procedureList : ProcedureMap
+    policyEndDate : Date
+    paymentProvider: Party
+  deriving (Eq, Show)
+
+data CalcBreakdown = CalcBreakdown
+  with
+    proRationFactorPercent: Decimal
+    annualDeductible : Decimal
+    currentDeductible : Decimal
+    coInsurancePercent: Decimal
+  deriving (Eq, Show)

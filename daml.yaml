@@ -1,0 +1,14 @@
+sdk-version: 0.13.32
+name: sff-ubin-healthcare
+version: 1.0.0
+source: src/main/daml
+scenario: Ubin.Test:setup
+parties:
+- "MediShield Life"
+- "IP Insurer"
+- Hospital
+- Patient
+- Ubin
+dependencies:
+- daml-prim
+- daml-stdlib

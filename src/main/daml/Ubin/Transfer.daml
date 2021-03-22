@@ -1,0 +1,55 @@
+--
+-- Copyright (c) 2019, Digital Asset (Switzerland) GmbH and/or its affiliates. All rights reserved.
+-- SPDX-License-Identifier: Apache-2.0
+--
+
+daml 1.2
+module Ubin.Transfer where
+
+data TransferStatus = Completed with transactionId : Text | Error Text
+  deriving (Eq, Show)
+
+template TransferRequest
+  with
+    claimID: Text
+    depository : Party
+    sender : Party
+    receiver : Party
+    currency : Text
+    amount : Decimal
+    patient: Party
+    hospital: Party
+  where
+    signatory sender
+    observer patient, receiver, hospital
+
+    controller depository can
+      ProcessPayment : ContractId Transfer
+        with status : TransferStatus
+        do
+          create Transfer with ..
+
+template Transfer
+  with
+    claimID: Text
+    depository : Party
+    sender : Party
+    receiver : Party
+    currency : Text
+    amount : Decimal
+    status : TransferStatus
+    patient: Party
+    hospital: Party
+  where
+    signatory sender, depository
+    observer patient, receiver, hospital
+
+name = scenario do
+  depository <- getParty "Ubin"
+  alice <- getParty "Alice"
+  bob <- getParty "Bob"
+  patient <- getParty "Patient"
+  hospital <- getParty "Hospital"
+
+  cid <- submit alice do create TransferRequest with claimID = "CLAIM123"; depository; sender = alice; receiver = bob; currency = "SGD"; amount = 10.0; patient; hospital
+  submit depository do exercise cid ProcessPayment with status = Completed "abcd-some-transaction-id-123"

@@ -1,0 +1,107 @@
+--
+-- Copyright (c) 2019, Digital Asset (Switzerland) GmbH and/or its affiliates. All rights reserved.
+-- SPDX-License-Identifier: Apache-2.0
+--
+
+daml 1.2
+module Ubin.Test where
+
+import Ubin.Main
+import Ubin.Types
+import DA.Date
+-- import DA.Time
+import DA.Next.Map
+import Ubin.Wallet
+
+setup = scenario do
+  medishield <- getParty "MediShield Life"
+  ipInsurer <- getParty "IP Insurer"
+  hospital <- getParty "Hospital"
+  patient <- getParty "Patient"
+  patient2 <- getParty "Patient2"
+  patient3 <- getParty "Patient3"
+  paymentProvider <- getParty "Ubin"
+  
+  passToDate $ date 2019 Nov 11
+
+  let 
+    referrerName = "Dr. Paige Mattel"
+    medishieldCalcBreakdown = CalcBreakdown with { proRationFactorPercent = 35.0; annualDeductible = 2000.0; currentDeductible = 0.0; coInsurancePercent = 10.0 }
+    ipInsurerCalcBreakdown = CalcBreakdown with { proRationFactorPercent = 50.0; annualDeductible = 1500.0; currentDeductible = 0.0; coInsurancePercent = 10.0 }
+    currency = "SGD"
+    procedures = [Total_Knee_Arthoscopy, Elbow_Coronoid_Fracture_ORIF, Foot_Polydactyly_Excision]
+    proceduresDetails = 
+      [ 
+        ProcedureDetails with { procedureName = Total_Knee_Arthoscopy; procedureCode = "SB700H"; cost = 13200.0 },
+        ProcedureDetails with { procedureName = Elbow_Coronoid_Fracture_ORIF; procedureCode = "SB702E"; cost = 11000.0 },
+        ProcedureDetails with { procedureName = Foot_Polydactyly_Excision; procedureCode = "SB833F"; cost = 12500.0 } 
+      ]
+    procedureList = fromList $ zip procedures proceduresDetails   
+    policyEndDate = date 2040 Jan 01
+
+  submit paymentProvider do 
+    create WalletHelper with depository = paymentProvider
+
+  -----------------------SETUP POLICY1 & PATIENT1-----------------------------
+  insurancePolicyRequestToMedishield1 <- submit patient do
+    create InsurancePolicyRequestToMedishield with policyDetails = PolicyDetails with ..
+  
+  insurancePolicyRequestToIpInsurer1 <- submit medishield do
+    exercise insurancePolicyRequestToMedishield1 ApprovePolicyByMedishield with insuranceID = "I42730"
+  
+  policy1 <- submit ipInsurer do
+    exercise insurancePolicyRequestToIpInsurer1 ApprovePolicyByIpInsurer
+  
+  patient1 <- submit hospital do
+    exercise policy1 RegisterPatient with name = "Kenneth O'Neil"; gender = "Male"; nric = "S9482948A"; dateOfBirth = "03/11/1990"; address = "300 Spring St., 291827"
+  
+  -----------------------SETUP POLICY2 & PATIENT2-----------------------------
+  insurancePolicyRequestToMedishield2 <- submit patient2 do
+    create InsurancePolicyRequestToMedishield with policyDetails = PolicyDetails with patient = patient2; ..
+  
+  insurancePolicyRequestToIpInsurer2 <- submit medishield do
+    exercise insurancePolicyRequestToMedishield2 ApprovePolicyByMedishield with insuranceID = "I43849"
+  
+  policy2 <- submit ipInsurer do
+    exercise insurancePolicyRequestToIpInsurer2 ApprovePolicyByIpInsurer
+  
+  patient2 <- submit hospital do
+    exercise policy2 RegisterPatient with name = "Kate Andrews"; gender = "Female"; nric = "S5728472G"; dateOfBirth = "03/11/1990"; address = "89 Pepys Road, 567432"
+  
+  -----------------------SETUP POLICY3 & PATIENT3-----------------------------
+  insurancePolicyRequestToMedishield3 <- submit patient3 do
+    create InsurancePolicyRequestToMedishield with policyDetails = PolicyDetails with patient = patient3; ..
+  
+  insurancePolicyRequestToIpInsurer3 <- submit medishield do
+    exercise insurancePolicyRequestToMedishield3 ApprovePolicyByMedishield with insuranceID = "I43918"
+  
+  policy3 <- submit ipInsurer do
+    exercise insurancePolicyRequestToIpInsurer3 ApprovePolicyByIpInsurer
+  
+  patient3 <- submit hospital do
+    exercise policy3 RegisterPatient with name = "George Washington"; gender = "Male"; nric = "T1847297E"; dateOfBirth = "03/11/1990"; address = "1783 South Canal Road, 454563"
+  
+  ------------------------------------------------------------------
+  -----------------------MANUAL FROM UI-----------------------------
+  ------------------------------------------------------------------
+  
+  patient1 <- submit hospital do
+    exercise patient1 CreateReferral with referrerName
+
+  -- appointment1 <- submit hospital do
+  --   exercise patient1 ScheduleProcedure with procedure = Total_Knee_Arthoscopy; doctor = "Dr. Henry Li"; dateAndTime = time (date 2019 Nov 20) 10 0 0
+
+  -- passToDate $ date 2019 Nov 20
+  -- pass $ hours 10
+
+  -- treatment1 <- submit hospital do
+  --   exercise appointment1 AdmitPatient
+  
+  -- claims <- submit hospital do
+  --   exercise treatment1 DischargePatient
+
+  assert True
+  
+  
+
+

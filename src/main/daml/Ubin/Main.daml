@@ -1,0 +1,172 @@
+--
+-- Copyright (c) 2019, Digital Asset (Switzerland) GmbH and/or its affiliates. All rights reserved.
+-- SPDX-License-Identifier: Apache-2.0
+--
+
+daml 1.2
+module Ubin.Main where
+
+import Ubin.Types
+import Ubin.Transfer
+import DA.Next.Map as M
+import DA.Optional
+import DA.Date
+
+template InsurancePolicyRequestToMedishield
+  with
+    policyDetails: PolicyDetails
+  where
+    signatory policyDetails.patient
+    controller policyDetails.medishield can
+      ApprovePolicyByMedishield: ContractId InsurancePolicyRequestToIpInsurer
+        with insuranceID: Text
+        do create InsurancePolicyRequestToIpInsurer with ..
+
+template InsurancePolicyRequestToIpInsurer
+  with 
+    insuranceID: Text
+    policyDetails: PolicyDetails
+  where
+    signatory policyDetails.patient, policyDetails.medishield
+    controller policyDetails.ipInsurer can
+      ApprovePolicyByIpInsurer: ContractId InsurancePolicy
+        do create InsurancePolicy with isPolicyInGoodStanding = True; ..
+
+template InsurancePolicy
+  with
+    insuranceID: Text
+    policyDetails: PolicyDetails
+    isPolicyInGoodStanding: Bool
+  where
+    signatory policyDetails.patient
+    observer policyDetails.ipInsurer, policyDetails.medishield, policyDetails.hospital
+    
+    controller policyDetails.hospital can
+      nonconsuming RegisterPatient: ContractId Patient
+        with name : Text
+             gender : Text
+             nric : Text
+             dateOfBirth : Text
+             address: Text
+        do create Patient with patient = policyDetails.patient; hospital = policyDetails.hospital; referrer = None; ..
+
+    key (insuranceID, policyDetails.patient): (Text, Party)
+    maintainer key._2
+
+template Patient
+  with
+    patient : Party
+    hospital: Party
+    insuranceID: Text
+    referrer: Optional Text
+    name : Text
+    gender : Text
+    nric : Text
+    dateOfBirth : Text
+    address: Text
+  where
+    signatory patient, hospital --, ipInsurer, medishield
+
+    controller hospital can
+      
+      CreateReferral: ContractId Patient
+        with
+          referrerName: Text
+        do create this with referrer = Some referrerName
+
+      nonconsuming ScheduleProcedure: ContractId Appointment
+        with
+          procedure: ProcedureName
+          doctor: Text
+          dateAndTime: Time
+        do
+          (policyCid, policyCdata) <- fetchByKey @InsurancePolicy (insuranceID, patient)
+          let
+            paymentProvider = policyCdata.policyDetails.paymentProvider
+            currency = policyCdata.policyDetails.currency
+            maybeProcedureDetails = M.lookup procedure policyCdata.policyDetails.procedureList
+            procedureDetails = fromSome maybeProcedureDetails
+            claimAmount = procedureDetails.cost
+            ipInsurerCalcBreakdown = policyCdata.policyDetails.ipInsurerCalcBreakdown
+            medishieldCalcBreakdown = policyCdata.policyDetails.medishieldCalcBreakdown
+            proRatedClaimableFromIpInsurer = ipInsurerCalcBreakdown.proRationFactorPercent * claimAmount / 100.0
+            proRatedClaimableFromMedishield = medishieldCalcBreakdown.proRationFactorPercent * claimAmount / 100.0
+            postDeducClaimableFromIpInsurer = proRatedClaimableFromIpInsurer - ipInsurerCalcBreakdown.annualDeductible
+            postDeducClaimableFromMedishield = proRatedClaimableFromMedishield - medishieldCalcBreakdown.annualDeductible
+            coPayIpInsurer = ipInsurerCalcBreakdown.coInsurancePercent * postDeducClaimableFromIpInsurer / 100.0
+            coPayMedishield = medishieldCalcBreakdown.coInsurancePercent * postDeducClaimableFromMedishield / 100.0
+            netClaimableIpInsurer = postDeducClaimableFromIpInsurer - coPayIpInsurer
+            netClaimableMedishield = postDeducClaimableFromMedishield - coPayMedishield
+
+            costOfTreatment = CostOfTreatment with
+              patientResponsibility = PatientResponsibility with
+                copay = coPayIpInsurer + coPayMedishield
+                deductible = ipInsurerCalcBreakdown.annualDeductible + medishieldCalcBreakdown.annualDeductible
+              insurerResponsibility = InsurerResponsibility with
+                ipInsurerAmt = netClaimableIpInsurer
+                medishieldAmt = netClaimableMedishield
+            
+          create Appointment with patientDetails = this; ..
+
+template Appointment
+  with
+    patientDetails: Patient
+    procedureDetails: ProcedureDetails
+    doctor: Text
+    dateAndTime: Time
+    costOfTreatment: CostOfTreatment
+    currency: Text
+    paymentProvider: Party
+  where
+    signatory patientDetails.hospital, patientDetails.patient
+
+    controller patientDetails.hospital can
+      AdmitPatient: ContractId Treatment
+        do 
+          now <- getTime
+          assertMsg "It isn't time to check in yet!" (now >= dateAndTime)
+          create Treatment with treatmentDate = toDateUTC dateAndTime; ..
+
+template Treatment
+  with
+    patientDetails: Patient
+    procedureDetails: ProcedureDetails
+    doctor: Text
+    treatmentDate: Date
+    costOfTreatment: CostOfTreatment
+    currency: Text
+    paymentProvider: Party
+  where
+    signatory patientDetails.hospital, patientDetails.patient
+    
+    controller patientDetails.hospital can
+      DischargePatient: (ContractId Claim, ContractId Claim, ContractId Claim)
+        do 
+          (policyCid, policyCdata) <- fetchByKey @InsurancePolicy (patientDetails.insuranceID, patientDetails.patient)
+          patientObligation <- create Claim with claimID = "CLAIM1"; sender = patientDetails.patient; receiver = patientDetails.hospital; 
+                                                  amount = costOfTreatment.patientResponsibility.copay + costOfTreatment.patientResponsibility.deductible;
+                                                  currency; dateOfClaimCreation = treatmentDate; treatmentDetails = this
+          ipInsurerObligation <- create Claim with claimID = "CLAIM2"; sender = policyCdata.policyDetails.ipInsurer; receiver = patientDetails.hospital; 
+                                                    amount = costOfTreatment.insurerResponsibility.ipInsurerAmt + costOfTreatment.insurerResponsibility.medishieldAmt;
+                                                    currency; dateOfClaimCreation = treatmentDate; treatmentDetails = this
+          medishieldObligation <- create Claim with claimID = "CLAIM3"; sender = policyCdata.policyDetails.medishield; receiver = policyCdata.policyDetails.ipInsurer; 
+                                                      amount = costOfTreatment.insurerResponsibility.medishieldAmt;
+                                                      currency; dateOfClaimCreation = treatmentDate; treatmentDetails = this
+          return (patientObligation, ipInsurerObligation, medishieldObligation)
+    
+template Claim
+  with
+    claimID: Text
+    sender: Party
+    receiver: Party
+    amount: Decimal
+    currency: Text
+    dateOfClaimCreation: Date
+    treatmentDetails: Treatment
+  where
+    signatory treatmentDetails.patientDetails.hospital
+    observer receiver, treatmentDetails.patientDetails.patient
+
+    controller sender can
+      PayClaim: ContractId TransferRequest
+        do create TransferRequest with depository = treatmentDetails.paymentProvider; patient = treatmentDetails.patientDetails.patient; hospital = treatmentDetails.patientDetails.hospital; ..
